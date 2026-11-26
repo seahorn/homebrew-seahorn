@@ -18,6 +18,7 @@ class SeaMlir < Formula
 
   bottle do
     root_url "https://github.com/seahorn/homebrew-seahorn/releases/download/sea-mlir-0.6.1"
+    sha256 cellar: :any, arm64_tahoe:  "69db9be0a1cd80cf2f858ab4260cf850bbb6aaf8455b48fe99e5bf93535a46ac"
     sha256 cellar: :any, x86_64_linux: "02e7ebb70cc6bd449fecd1c60eb4cd0a81767eb71dd2ba0e71755279b14e28f0"
   end
 
