@@ -1,0 +1,89 @@
+# SPDX-FileCopyrightText: 2026 The sea-mlir Authors
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+# Install the tap's formulae from their bottles on GitHub's Ubuntu runners,
+# as a user does: tap this checkout (a pull request tests its own
+# formulae), `brew install seahorn`, every keg poured from a bottle, `brew
+# test`, sea-mlir's tarball smoke on the keg and the SeaHorn export flow
+# (.github/install-test.sh). The smoke scripts come from sea-mlir at the
+# tag of the sea-mlir formula's version. The hosted images carry many
+# packages, which can hide a missing dependency; the clean test is the
+# Docker smoke of sea-mlir (docker/homebrew-smoke.sh), which installs into
+# a fresh ghcr.io/homebrew/brew container. macOS jobs come with the macOS
+# bottles.
+name: install test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # weekly: homebrew-core's dependencies (llvm@18, gmp, mpfr, ...) move
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        # versions named explicitly, not ubuntu-latest
+        os: [ubuntu-24.04, ubuntu-26.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_ANALYTICS: 1
+      HOMEBREW_NO_ENV_HINTS: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+      # used only when the runner has no Homebrew
+      BREW_TAG: 7.0.16
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: tap
+          persist-credentials: false
+      - name: Homebrew on PATH (7.0 or newer)
+        run: |
+          brew_prefix=/home/linuxbrew/.linuxbrew
+          if [ ! -x "$brew_prefix/bin/brew" ]; then
+            # Homebrew's documented untar-anywhere install, at a pinned tag
+            sudo mkdir -p "$brew_prefix"
+            sudo chown -R "$(id -un)" /home/linuxbrew
+            git clone --depth 1 --branch "$BREW_TAG" https://github.com/Homebrew/brew "$brew_prefix/Homebrew"
+            mkdir -p "$brew_prefix/bin"
+            ln -s ../Homebrew/bin/brew "$brew_prefix/bin/brew"
+          fi
+          eval "$("$brew_prefix/bin/brew" shellenv)"
+          major=$(brew --version | sed -n '1s/^Homebrew \([0-9]*\)\..*/\1/p')
+          if [ -z "$major" ] || [ "$major" -lt 7 ]; then
+            brew update
+          fi
+          brew --version
+          {
+            echo "$brew_prefix/bin"
+            echo "$brew_prefix/sbin"
+          } >> "$GITHUB_PATH"
+      - name: Tap this checkout as seahorn/seahorn
+        id: tap
+        run: |
+          bash tap/.github/install-test.sh tap tap | tee tap.log
+          version=$(sed -n 's/^sea-mlir-version: //p' tap.log)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad sea-mlir version: $version"; exit 1; }
+          echo "sea-mlir-tag=v$version" >> "$GITHUB_OUTPUT"
+      - name: sea-mlir's smoke scripts at the formula's tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: seahorn/sea-mlir
+          ref: ${{ steps.tap.outputs.sea-mlir-tag }}
+          path: sea-mlir
+          persist-credentials: false
+      - name: Install from bottles and smoke
+        run: bash tap/.github/install-test.sh check sea-mlir
